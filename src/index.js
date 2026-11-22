@@ -1,22 +1,28 @@
 // ============================================================
 // Punto de entrada del servidor Express
-// Sistema Integral de Gestión de Leads
-// ============================================================
-// Secuencia de inicio:
-//   1. Cargar variables de entorno desde .env
-//   2. Configurar middlewares globales de Express
-//   3. Registrar las rutas de la API bajo el prefijo /api
-//   4. Servir la interfaz web de prueba desde /public
-//   5. Verificar la conexión a MySQL
-//   6. Levantar el servidor en el puerto configurado
-//
-// El bloque condicional require.main === module garantiza que
-// el servidor solo se levanta cuando el archivo se ejecuta
-// directamente (node src/index.js), no cuando Jest lo importa
-// para las pruebas unitarias.
+// Sistema Integral de Gestión de Leads (SIGL)
 // ============================================================
 
 require('dotenv').config();
+
+// --- 1. VALIDACIÓN ESTRICTA DE VARIABLES DE ENTORNO (Fase 0) ---
+const requiredEnvVars = [
+    'PORT', 
+    'DB_HOST', 
+    'DB_USER', 
+    'DB_PASSWORD', 
+    'DB_NAME', 
+    'JWT_SECRET', 
+    'FRONTEND_URL'
+];
+
+const missingVars = requiredEnvVars.filter(varName => !process.env[varName]);
+
+if (missingVars.length > 0) {
+    console.error(`\x1b[31m[ERROR CRÍTICO] Faltan variables de entorno obligatorias: ${missingVars.join(', ')}\x1b[0m`);
+    console.error('El servidor no puede iniciar sin estas variables. Revise el archivo .env');
+    process.exit(1);
+}
 
 const express = require('express');
 const cors    = require('cors');
@@ -28,40 +34,43 @@ const authRoutes                          = require('./routes/authRoutes');
 const app  = express();
 const PORT = process.env.PORT || 3000;
 
-// cors() permite que clientes en otros dominios consuman la API.
-// En producción se deben especificar los orígenes permitidos explícitamente.
-app.use(cors());
+// --- 2. CONFIGURACIÓN DE MIDDLEWARES GLOBALES ---
 
-// express.json() parsea automáticamente el cuerpo de peticiones
-// con Content-Type: application/json
+// CORS Restrictivo
+const allowedOrigins = [
+    process.env.FRONTEND_URL, 
+    `http://localhost:${PORT}`,
+    `http://127.0.0.1:${PORT}`,
+    'http://localhost:5500',    // Live Server VSCode
+    'http://127.0.0.1:5500'     // Live Server VSCode
+];
+
+const corsOptions = {
+    origin: (origin, callback) => {
+        if (!origin) return callback(null, true);
+        if (allowedOrigins.includes(origin)) {
+            callback(null, true);
+        } else {
+            console.error(`[CORS BLOQUEADO] Origen no autorizado: ${origin}`);
+            callback(new Error('Acceso denegado por políticas de CORS'));
+        }
+    },
+    credentials: true,
+    optionsSuccessStatus: 200
+};
+
+app.use(cors(corsOptions));
 app.use(express.json());
-
-// express.urlencoded() permite recibir datos de formularios HTML estándar
 app.use(express.urlencoded({ extended: true }));
 
-// ✅ NUEVA LÍNEA: Sirve el frontend real (Materialize, lógica completa)
+// --- 3. SERVIR ARCHIVOS ESTÁTICOS ---
 app.use(express.static(path.join(__dirname, '..', 'frontend')));
-
-// Sirve los archivos estáticos de la carpeta public (interfaz web de prueba)
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
-// Todas las rutas de autenticación quedan bajo el prefijo /api/auth
+// --- 4. REGISTRO DE RUTAS ---
 app.use('/api/auth', authRoutes);
 
-// ----------------------------------------------------------------
-// Endpoint de monitoreo — GET /api/estado
-// ----------------------------------------------------------------
-// Verifica en tiempo real que el servidor está operativo Y que
-// la base de datos MySQL responde. No requiere autenticación.
-//
-// Versión anterior: siempre respondía exito: true sin verificar MySQL.
-// Versión actual:   ejecuta checkConnection() que abre una conexión
-//                   real y la libera, reportando el estado verdadero.
-//
-// Entrada:  ninguna
-// Salida:   { exito, mensaje, version, baseDeDatos, timestamp }
-// HTTP 200 si todo está bien — HTTP 503 si MySQL no responde
-// ----------------------------------------------------------------
+// --- 5. ENDPOINT DE MONITOREO ---
 app.get('/api/estado', async (req, res) => {
   const estadoBD = await checkConnection();
 
@@ -71,26 +80,40 @@ app.get('/api/estado', async (req, res) => {
       ? 'API del Sistema de Gestión Integral de Leads operativa.'
       : 'API operativa pero sin conexión a la base de datos.',
     version:     '2.0.0',
-    baseDeDatos: estadoBD.mensaje,
+    baseDeDatos: estadoBD.conectada ? 'Conectada' : 'No disponible', // Seguridad aplicada
     timestamp:   new Date().toISOString()
   });
 });
 
-// Captura cualquier ruta no definida y responde con HTTP 404.
-// Debe ir siempre después de todas las rutas declaradas.
+// --- 6. MANEJO DE RUTAS NO ENCONTRADAS (404) ---
 app.use((req, res) => {
   res.status(404).json({
     exito:   false,
-    mensaje: `Ruta ${req.method} ${req.originalUrl} no encontrada en esta API.`
+    mensaje: 'Ruta no encontrada en esta API.'
   });
 });
 
-// Se exporta la app para que Jest pueda importarla en las pruebas
-// sin levantar un servidor real en ningún puerto.
+// --- 7. MANEJADOR GLOBAL DE ERRORES ---
+// Middleware para capturar errores de CORS y otros errores no controlados.
+app.use((err, req, res, next) => {
+    if (err.message === 'Acceso denegado por políticas de CORS') {
+        return res.status(403).json({ 
+            exito: false, 
+            mensaje: err.message 
+        });
+    }
+    
+    console.error('[ERROR GLOBAL]', err.stack);
+    res.status(err.status || 500).json({
+        exito: false,
+        mensaje: 'Error interno del servidor'
+    });
+});
+
+// Se exporta la app para Jest
 module.exports = app;
 
-// El bloque condicional evita que el servidor se levante durante
-// la ejecución de las pruebas unitarias con Jest.
+// --- 8. INICIALIZACIÓN DEL SERVIDOR ---
 if (require.main === module) {
   const iniciarServidor = async () => {
     await testConnection();
@@ -99,10 +122,7 @@ if (require.main === module) {
       console.log('  🚀 Sistema de Gestión Integral de Leads — API   ');
       console.log('═══════════════════════════════════════════════════');
       console.log(`  ✅ Servidor en:  http://localhost:${PORT}`);
-      console.log(`  🔐 Registro:     POST /api/auth/registro`);
-      console.log(`  🔑 Login:        POST /api/auth/login`);
-      console.log(`  👤 Perfil:       GET  /api/auth/perfil`);
-      console.log(`  📡 Estado:       GET  /api/estado`);
+      console.log(`  ✅ CORS activo:  Lista blanca configurada`);
       console.log('═══════════════════════════════════════════════════');
     });
   };
