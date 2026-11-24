@@ -2,20 +2,9 @@
 // Módulo de gestión de leads
 // Sistema Integral de Gestión de Leads — Frontend
 // ============================================================
-// Responsabilidades:
-//   - Renderizar la tabla de leads con datos reales o de demo
-//   - Gestionar el formulario CRUD (crear, editar, eliminar)
-//   - Aplicar filtros de búsqueda en tiempo real
-//   - Mostrar notificaciones de operación con toasts Materialize
-//
-// Autor: mgarcia-frontend
-// Rama:  feature/frontend-leads
-// ============================================================
 
 import { leadsService } from './api.js';
 
-// Mapa de colores CSS por estado del lead
-// Cada clase badge-* está definida en style.css
 const CLASE_ESTADO = {
   'Nuevo':      'badge-Nuevo',
   'En proceso': 'badge-En-proceso',
@@ -24,28 +13,22 @@ const CLASE_ESTADO = {
   'Descartado': 'badge-Descartado'
 };
 
-// Mapa de colores de texto por prioridad usando clases Materialize
 const CLASE_PRIORIDAD = {
   'Alta':  'red-text text-darken-2',
   'Media': 'orange-text text-darken-1',
   'Baja':  'grey-text'
 };
 
-// ============================================================
-// renderTablaLeads
-// ============================================================
-// Dibuja las filas de la tabla de leads en el tbody del DOM.
-//
-// Entrada:
-//   leads     (array)    — lista de objetos lead a mostrar
-//   onEditar  (function) — callback que recibe el id_lead al editar
-//   onEliminar(function) — callback que recibe el id_lead al eliminar
-// ============================================================
+// CORRECCIÓN AUDITORÍA: Estado local del módulo y bandera de inicialización.
+// Evita que los listeners se acumulen si la vista se vuelve a cargar o 
+// si se guarda/elimina un lead repetidamente.
+let leadsState = [];
+let isInitialized = false;
+
 export const renderTablaLeads = (leads, onEditar, onEliminar) => {
   const tbody = document.getElementById('leads-tbody');
   if (!tbody) return;
 
-  // Mensaje vacío cuando no hay leads que mostrar
   if (leads.length === 0) {
     tbody.innerHTML = `
       <tr>
@@ -57,7 +40,6 @@ export const renderTablaLeads = (leads, onEditar, onEliminar) => {
     return;
   }
 
-  // Construye una fila HTML por cada lead del arreglo
   tbody.innerHTML = leads.map(lead => `
     <tr>
       <td><strong>${lead.id_lead}</strong></td>
@@ -85,7 +67,6 @@ export const renderTablaLeads = (leads, onEditar, onEliminar) => {
     </tr>
   `).join('');
 
-  // Delegación de eventos sobre los botones generados dinámicamente
   tbody.querySelectorAll('.btn-editar').forEach(btn =>
     btn.addEventListener('click', () => onEditar(btn.dataset.id))
   );
@@ -94,59 +75,53 @@ export const renderTablaLeads = (leads, onEditar, onEliminar) => {
   );
 };
 
-// ============================================================
-// iniciarModuloLeads
-// ============================================================
-// Punto de entrada del módulo. Carga los datos, conecta los
-// eventos de filtro y renderiza la tabla inicial.
-// Se llama desde main.js cada vez que se activa la vista leads.
-// ============================================================
-export const iniciarModuloLeads = () => {
+// CORRECCIÓN AUDITORÍA: Función pura de renderizado.
+// No enlaza eventos, solo lee el estado actual (leadsState) y pinta la tabla.
+const renderizar = () => {
+  const busqueda  = (document.getElementById('buscar-lead')?.value || '').toLowerCase();
+  const filtroEst = document.getElementById('filtro-estado')?.value || '';
 
-  // Carga leads de sesión o genera datos demo si no hay ninguno
-  let leads = leadsService.obtenerTodos();
-  if (leads.length === 0) {
-    leads = leadsService.generarDemo();
+  const filtrados = leadsState.filter(l => {
+    const coincideBusqueda = !busqueda ||
+      l.nombre.toLowerCase().includes(busqueda) ||
+      l.email.toLowerCase().includes(busqueda);
+    const coincideEstado = !filtroEst || l.estado === filtroEst;
+    return coincideBusqueda && coincideEstado;
+  });
+
+  renderTablaLeads(filtrados, abrirEdicion, confirmarEliminacion);
+
+  const contador = document.getElementById('contador-leads');
+  if (contador) {
+    contador.textContent = `${filtrados.length} de ${leadsState.length} leads`;
+  }
+};
+
+export const iniciarModuloLeads = () => {
+  // Sincroniza el estado local con el almacenamiento
+  leadsState = leadsService.obtenerTodos();
+  if (leadsState.length === 0) {
+    leadsState = leadsService.generarDemo();
   }
 
-  // Renderiza la tabla aplicando los filtros activos
-  const renderizar = () => {
-    const busqueda   = (document.getElementById('buscar-lead')?.value || '').toLowerCase();
-    const filtroEst  = document.getElementById('filtro-estado')?.value || '';
+  // CORRECCIÓN AUDITORÍA: Solo enlazar eventos la primera vez que se entra a la vista.
+  if (!isInitialized) {
+    document.getElementById('buscar-lead')
+      ?.addEventListener('input', renderizar);
+    document.getElementById('filtro-estado')
+      ?.addEventListener('change', renderizar);
+    document.getElementById('btn-nuevo-lead')
+      ?.addEventListener('click', abrirNuevo);
+    
+    isInitialized = true;
+  }
 
-    const filtrados = leads.filter(l => {
-      const coincideBusqueda = !busqueda ||
-        l.nombre.toLowerCase().includes(busqueda) ||
-        l.email.toLowerCase().includes(busqueda);
-      const coincideEstado = !filtroEst || l.estado === filtroEst;
-      return coincideBusqueda && coincideEstado;
-    });
-
-    renderTablaLeads(filtrados, abrirEdicion, confirmarEliminacion);
-
-    // Actualiza el contador de leads visible
-    const contador = document.getElementById('contador-leads');
-    if (contador) {
-      contador.textContent = `${filtrados.length} de ${leads.length} leads`;
-    }
-  };
-
-  // Filtros reactivos — se actualizan mientras el usuario escribe o selecciona
-  document.getElementById('buscar-lead')
-    ?.addEventListener('input', renderizar);
-  document.getElementById('filtro-estado')
-    ?.addEventListener('change', renderizar);
-
-  // Botón "Nuevo Lead" — abre el modal con el formulario vacío
-  document.getElementById('btn-nuevo-lead')
-    ?.addEventListener('click', abrirNuevo);
-
+  // Renderiza los datos actuales
   renderizar();
 };
 
 // ── Funciones internas del módulo ────────────────────────────
 
-// Abre el modal con el formulario vacío para crear un lead nuevo
 const abrirNuevo = () => {
   document.getElementById('modal-lead-titulo').textContent = 'Nuevo Lead';
   document.getElementById('form-lead').reset();
@@ -155,10 +130,8 @@ const abrirNuevo = () => {
   M.Modal.getInstance(document.getElementById('modal-lead')).open();
 };
 
-// Rellena el formulario del modal con los datos del lead a editar
-// Entrada: id (string) — id_lead del lead a editar
 const abrirEdicion = (id) => {
-  const lead = leadsService.obtenerTodos().find(l => l.id_lead === id);
+  const lead = leadsState.find(l => l.id_lead === id);
   if (!lead) return;
 
   document.getElementById('modal-lead-titulo').textContent = 'Editar Lead';
@@ -170,26 +143,16 @@ const abrirEdicion = (id) => {
   document.getElementById('lead-fuente').value        = lead.fuente || '';
   document.getElementById('lead-feedback').value      = lead.feedback_cliente || '';
 
-  // Notifica a Materialize que los selects cambiaron programáticamente
   M.FormSelect.init(document.querySelectorAll('select'));
   M.Modal.getInstance(document.getElementById('modal-lead')).open();
 };
 
-// Muestra el modal de confirmación antes de eliminar
-// Entrada: id (string) — id_lead del lead a eliminar
 const confirmarEliminacion = (id) => {
   document.getElementById('confirm-lead-id').textContent    = id;
   document.getElementById('btn-confirmar-eliminar').dataset.id = id;
   M.Modal.getInstance(document.getElementById('modal-confirmar')).open();
 };
 
-// ============================================================
-// guardarLead — exportada para ser llamada desde main.js
-// ============================================================
-// Lee el formulario del modal, valida y crea o actualiza el lead.
-// Entrada: ninguna (lee directamente del DOM)
-// Salida:  ninguna (actualiza sessionStorage y re-renderiza)
-// ============================================================
 export const guardarLead = () => {
   const id        = document.getElementById('lead-id-edicion').value;
   const nombre    = document.getElementById('lead-nombre').value.trim();
@@ -199,7 +162,6 @@ export const guardarLead = () => {
   const fuente    = document.getElementById('lead-fuente').value;
   const feedback  = document.getElementById('lead-feedback').value.trim();
 
-  // Validación mínima antes de persistir
   if (!nombre || !email) {
     M.toast({ html: '⚠️ Los campos nombre y email son obligatorios.', classes: 'orange darken-2' });
     return;
@@ -208,28 +170,27 @@ export const guardarLead = () => {
   const datos = { nombre, email, estado, prioridad, fuente, feedback_cliente: feedback };
 
   if (id) {
-    // Modo edición — actualiza el lead existente
     leadsService.actualizar(id, datos);
     M.toast({ html: `✅ Lead ${id} actualizado correctamente.`, classes: 'teal darken-2' });
   } else {
-    // Modo creación — registra el lead nuevo
     const nuevo = leadsService.guardar(datos);
     M.toast({ html: `✅ Lead ${nuevo.id_lead} creado correctamente.`, classes: 'teal darken-2' });
   }
 
   M.Modal.getInstance(document.getElementById('modal-lead')).close();
-  iniciarModuloLeads();
+  
+  // CORRECCIÓN AUDITORÍA: Ya no llamamos a iniciarModuloLeads().
+  // Actualizamos el estado local y re-renderizamos.
+  leadsState = leadsService.obtenerTodos();
+  renderizar();
 };
 
-// ============================================================
-// eliminarLead — exportada para ser llamada desde main.js
-// ============================================================
-// Elimina el lead identificado por id y re-renderiza la tabla.
-// Entrada: id (string) — id_lead del lead a eliminar
-// ============================================================
 export const eliminarLead = (id) => {
   leadsService.eliminar(id);
   M.toast({ html: `🗑️ Lead ${id} eliminado.`, classes: 'red darken-1' });
   M.Modal.getInstance(document.getElementById('modal-confirmar')).close();
-  iniciarModuloLeads();
+  
+  // CORRECCIÓN AUDITORÍA: Ya no llamamos a iniciarModuloLeads().
+  leadsState = leadsService.obtenerTodos();
+  renderizar();
 };

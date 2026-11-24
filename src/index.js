@@ -24,9 +24,10 @@ if (missingVars.length > 0) {
     process.exit(1);
 }
 
-const express = require('express');
-const cors    = require('cors');
-const path    = require('path');
+const express      = require('express');
+const cors         = require('cors');
+const path         = require('path');
+const cookieParser = require('cookie-parser'); // NUEVO: Requerido para leer HttpOnly Cookies
 
 const { testConnection, checkConnection } = require('./config/database');
 const authRoutes                          = require('./routes/authRoutes');
@@ -55,13 +56,15 @@ const corsOptions = {
             callback(new Error('Acceso denegado por políticas de CORS'));
         }
     },
-    credentials: true,
+    credentials: true, // CRÍTICO: Permite que el navegador envíe y reciba cookies
     optionsSuccessStatus: 200
 };
 
 app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+// CRÍTICO: Habilita req.cookies en toda la app. Sin esto, el middleware no puede leer el JWT.
+app.use(cookieParser()); 
 
 // --- 3. SERVIR ARCHIVOS ESTÁTICOS ---
 app.use(express.static(path.join(__dirname, '..', 'frontend')));
@@ -80,7 +83,7 @@ app.get('/api/estado', async (req, res) => {
       ? 'API del Sistema de Gestión Integral de Leads operativa.'
       : 'API operativa pero sin conexión a la base de datos.',
     version:     '2.0.0',
-    baseDeDatos: estadoBD.conectada ? 'Conectada' : 'No disponible', // Seguridad aplicada
+    baseDeDatos: estadoBD.conectada ? 'Conectada' : 'No disponible',
     timestamp:   new Date().toISOString()
   });
 });
@@ -94,7 +97,6 @@ app.use((req, res) => {
 });
 
 // --- 7. MANEJADOR GLOBAL DE ERRORES ---
-// Middleware para capturar errores de CORS y otros errores no controlados.
 app.use((err, req, res, next) => {
     if (err.message === 'Acceso denegado por políticas de CORS') {
         return res.status(403).json({ 
@@ -110,7 +112,6 @@ app.use((err, req, res, next) => {
     });
 });
 
-// Se exporta la app para Jest
 module.exports = app;
 
 // --- 8. INICIALIZACIÓN DEL SERVIDOR ---

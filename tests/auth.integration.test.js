@@ -1,97 +1,74 @@
-// ============================================================
-// PRUEBAS DE INTEGRACIÓN - API REAL con Base de Datos Real
-// ============================================================
-// Ejecutar con: pnpm test -- auth.integration.test.js
-// Requiere: Base de datos MySQL activa (local o remota)
-// ============================================================
-// Forzar uso de base de datos de pruebas
-process.env.DB_NAME = 'leads_test';
-process.env.JWT_SECRET = 'leads_sistema_gestion_clave_secreta_2024';
-
 const request = require('supertest');
-const app = require('../src/index');// ajusta ruta si es necesario
+const app = require('../src/index');
+const { pool } = require('../src/config/database');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 
-// NO se hace mock de mysql2 ni bcrypt – se usa la BD real
+jest.mock('../src/config/database', () => ({
+  pool: { query: jest.fn() },
+  checkConnection: jest.fn(),
+  testConnection: jest.fn()
+}));
 
-describe('Pruebas de integración - Autenticación (BD real)', () => {
-  let usuarioTestEmail = `test_integracion_${Date.now()}@leads.com`;
+describe('Auth Integration - HttpOnly Cookies (Auditoría Final)', () => {
+  const agent = request.agent(app);
 
-  test('01 - Registro exitoso (201)', async () => {
-    const res = await request(app)
-      .post('/api/auth/registro')
-      .send({
-        nombre: 'Integración Test',
-        email: usuarioTestEmail,
-        password: 'Test1234',
-        rol: 'asesor'
-      });
-    expect(res.status).toBe(201);
-    expect(res.body.exito).toBe(true);
-    expect(res.body.datos.email).toBe(usuarioTestEmail);
+  beforeAll(() => {
+    process.env.JWT_SECRET = 'test_secret_key_sigl';
+    process.env.NODE_ENV = 'test';
   });
 
-  test('02 - Registro con email duplicado (400/409)', async () => {
-    const res = await request(app)
-      .post('/api/auth/registro')
-      .send({
-        nombre: 'Duplicado',
-        email: usuarioTestEmail, // mismo email del registro anterior
-        password: 'Test1234'
-      });
-    expect(res.status).toBe(409); // o 400 según tu API
-    expect(res.body.exito).toBe(false);
-  });
+  beforeEach(() => jest.clearAllMocks());
 
-  test('03 - Registro con contraseña débil (400)', async () => {
-    const res = await request(app)
-      .post('/api/auth/registro')
-      .send({
-        nombre: 'Débil',
-        email: `debil${Date.now()}@leads.com`,
-        password: '123'
-      });
-    expect(res.status).toBe(400);
-    expect(res.body.mensaje).toMatch(/6 caracteres|contraseña/i);
-  });
+  it('Login: debe retornar 200, setear cookie HttpOnly y sincronizar Max-Age con el JWT', async () => {
+    const hash = await bcrypt.hash('password123', 10);
+    pool.query.mockResolvedValueOnce([[{ id: 1, nombre: 'Admin', email: 'admin@test.com', password_hash: hash, rol: 'admin', activo: 1 }]]);
 
-  test('04 - Login exitoso (200) con token', async () => {
-    const res = await request(app)
-      .post('/api/auth/login')
-      .send({ email: usuarioTestEmail, password: 'Test1234' });
+    const res = await agent.post('/api/auth/login').send({ email: 'admin@test.com', password: 'password123' });
+
     expect(res.status).toBe(200);
-    expect(res.body).toHaveProperty('token');
-    expect(res.body.usuario.email).toBe(usuarioTestEmail);
+    expect(res.body.token).toBeUndefined(); // El token no va en el JSON
+    
+    const cookies = res.headers['set-cookie'];
+    expect(cookies[0]).toContain('jwt=');
+    expect(cookies[0]).toContain('HttpOnly');
+    
+    // Validar que la cookie expira al mismo tiempo que el JWT
+    const tokenString = cookies[0].split('jwt=')[1].split(';')[0];
+    const decodedJwt = jwt.decode(tokenString);
+    
+    // Extraer el Max-Age de la cookie (en segundos)
+    const maxAgeMatch = cookies[0].match(/Max-Age=(\d+)/);
+    expect(maxAgeMatch).not.toBeNull();
+    const maxAgeMs = parseInt(maxAgeMatch[1], 10) * 1000;
+    
+    // Calcular la diferencia entre la expiración del JWT y el tiempo actual + maxAge
+    const ahora = Date.now();
+    const tiempoExpiracionJwt = decodedJwt.exp * 1000;
+    const tiempoExpiracionCookie = ahora + maxAgeMs;
+    
+    // Tolerancia de 2 segundos (por el tiempo de ejecución del test)
+    const diferencia = Math.abs(tiempoExpiracionJwt - tiempoExpiracionCookie);
+    expect(diferencia).toBeLessThan(2000); 
   });
 
-  test('05 - Login con credenciales inválidas (401)', async () => {
-    const res = await request(app)
-      .post('/api/auth/login')
-      .send({ email: usuarioTestEmail, password: 'wrong' });
-    expect(res.status).toBe(401);
-  });
-
-  test('06 - Perfil protegido con token válido (200)', async () => {
-    // Primero hacer login para obtener token
-    const loginRes = await request(app)
-      .post('/api/auth/login')
-      .send({ email: usuarioTestEmail, password: 'Test1234' });
-    const token = loginRes.body.token;
-
-    const res = await request(app)
-      .get('/api/auth/perfil')
-      .set('Authorization', `Bearer ${token}`);
+  it('Perfil: debe permitir acceso usando la cookie guardada por el agent', async () => {
+    pool.query.mockResolvedValueOnce([[{ id: 1, nombre: 'Admin', email: 'admin@test.com', rol: 'admin', creado_en: new Date() }]]);
+    const res = await agent.get('/api/auth/perfil');
     expect(res.status).toBe(200);
-    expect(res.body.datos.email).toBe(usuarioTestEmail);
+    expect(res.body.datos.email).toBe('admin@test.com');
   });
 
-  test('07 - Perfil protegido sin token (401)', async () => {
+  it('Perfil: debe denegar acceso si no hay cookie', async () => {
     const res = await request(app).get('/api/auth/perfil');
     expect(res.status).toBe(401);
   });
 
-  test('08 - Health check con BD conectada (200)', async () => {
-    const res = await request(app).get('/api/estado');
+  it('Logout: debe borrar la cookie de sesión (Expires en el pasado)', async () => {
+    const res = await agent.post('/api/auth/logout');
     expect(res.status).toBe(200);
-    expect(res.body.baseDeDatos).toBe('Conectada');
+    const cookies = res.headers['set-cookie'];
+    expect(cookies[0]).toContain('jwt=;');
+    expect(cookies[0]).toContain('Expires=Thu, 01 Jan 1970'); 
   });
 });

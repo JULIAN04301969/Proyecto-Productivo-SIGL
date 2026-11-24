@@ -1,26 +1,12 @@
 // ============================================================
 // Módulo de conexión a la base de datos MySQL
-// Sistema Integral de Gestión de Leads
-// ============================================================
-// Proporciona dos funciones de conectividad:
-//
-//   testConnection()   → Verifica la conexión al iniciar el servidor.
-//                        Detiene el proceso si MySQL no está disponible.
-//
-//   checkConnection()  → Verifica la conexión en tiempo real sin detener
-//                        el proceso. Usada por el endpoint /api/estado
-//                        para reportar el estado real de la base de datos.
-//
-// El pool reutiliza conexiones activas evitando abrir y cerrar
-// una conexión por cada petición HTTP entrante.
+// Sistema Integral de Gestión de Leads (SIGL)
 // ============================================================
 
 const mysql = require('mysql2/promise');
 require('dotenv').config();
 
 // Pool de conexiones configurado con los parámetros del servidor MySQL.
-// Los valores se leen desde variables de entorno definidas en el archivo .env
-// para mantener las credenciales fuera del repositorio.
 const pool = mysql.createPool({
   host:               process.env.DB_HOST     || 'localhost',
   user:               process.env.DB_USER     || 'root',
@@ -35,8 +21,6 @@ const pool = mysql.createPool({
 // ------------------------------------------------------------
 // testConnection
 // Verifica la conectividad con MySQL al iniciar el servidor.
-// Si la conexión falla, detiene el proceso para evitar que el
-// servidor opere sin base de datos disponible.
 // ------------------------------------------------------------
 const testConnection = async () => {
   try {
@@ -51,21 +35,22 @@ const testConnection = async () => {
 
 // ------------------------------------------------------------
 // checkConnection
-// Verifica la conectividad en tiempo real ejecutando una consulta
-// ligera (SELECT 1). A diferencia de testConnection(), retorna
-// el estado en lugar de detener el proceso, siendo apta para
-// endpoints de monitoreo que necesitan reportar salud del sistema.
-//
-// Salida: { conectada: boolean, mensaje: string }
+// Verifica la conectividad en tiempo real. Usa try/finally para
+// garantizar que la conexión SIEMPRE se libere, incluso si falla.
 // ------------------------------------------------------------
 const checkConnection = async () => {
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     await connection.query('SELECT 1');
-    connection.release();
     return { conectada: true, mensaje: 'Conectada' };
   } catch (error) {
-    return { conectada: false, mensaje: error.message };
+    // Registrar el error internamente, pero no exponerlo al cliente
+    console.error('[DB ERROR] Fallo en checkConnection:', error.message);
+    return { conectada: false, mensaje: 'No disponible' };
+  } finally {
+    // Garantiza que la conexión vuelva al pool
+    if (connection) connection.release();
   }
 };
 
