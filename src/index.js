@@ -72,6 +72,7 @@ app.use(express.static(path.join(__dirname, '..', 'public')));
 
 // --- 4. REGISTRO DE RUTAS ---
 app.use('/api/auth', authRoutes);
+app.use('/api/leads', require('./routes/leadRoutes')); 
 
 // --- 5. ENDPOINT DE MONITOREO ---
 app.get('/api/estado', async (req, res) => {

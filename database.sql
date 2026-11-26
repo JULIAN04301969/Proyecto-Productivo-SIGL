@@ -61,3 +61,29 @@ SELECT
   'Base de datos lista' AS estado,
   COUNT(*)              AS usuarios_registrados
 FROM usuarios;
+-- ============================================================
+-- Tabla: leads
+-- Sistema Integral de Gestión de Leads
+-- ============================================================
+CREATE TABLE IF NOT EXISTS leads (
+  id                     INT           NOT NULL AUTO_INCREMENT,
+  nombre                 VARCHAR(100)  NOT NULL,
+  email                  VARCHAR(150)  NOT NULL,
+  telefono               VARCHAR(20)   NULL,
+  estado                 ENUM('Nuevo','En proceso','Calificado','Cerrado','Descartado') NOT NULL DEFAULT 'Nuevo',
+  prioridad              ENUM('Alta','Media','Baja') NOT NULL DEFAULT 'Media',
+  fuente                 VARCHAR(100)  NULL,
+  feedback_cliente       TEXT          NULL,
+  asesor_id              INT           NOT NULL,
+  fecha_registro         DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  fecha_ultimo_contacto  DATETIME      NULL, -- Nulo hasta que haya interacción real
+  PRIMARY KEY (id),
+  INDEX idx_asesor (asesor_id),
+  INDEX idx_estado (estado),
+  CONSTRAINT fk_lead_asesor 
+    FOREIGN KEY (asesor_id) REFERENCES usuarios(id)
+    ON DELETE RESTRICT 
+    ON UPDATE CASCADE
+) ENGINE=InnoDB
+  DEFAULT CHARSET=utf8mb4
+  COLLATE=utf8mb4_unicode_ci;

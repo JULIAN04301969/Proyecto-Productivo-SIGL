@@ -52,3 +52,10 @@ de esos conceptos. Queda abierta, como pista paralela, la exploración de
 dichas herramientas en ramas o repositorios SEPARADOS del código evaluable,
 sujetos a las mismas reglas de esta constitución (tests, comentarios,
 self-review, evidencias).
+
+## 9. Deuda Técnica Aceptada y Justificada (Post-Auditoría)
+*Registro de observaciones levantadas por la auditoría técnica que se resolverán en fases posteriores o que se asumen como riesgo controlado.*
+
+1. **Protección CSRF (Fase de Despliegue):** Actualmente, en producción, las cookies viajan con `SameSite=None`. Las rutas POST/PUT/DELETE de la API confían únicamente en la cookie JWT para autenticar. Esto es vulnerable a ataques CSRF. **Acción requerida:** Antes del despliegue final, es OBLIGATORIO implementar el patrón *Double Submit Cookie* (Token CSRF) y exigir su validación en el backend y su envío en el frontend para todas las operaciones de escritura.
+2. **Desajuste de ID visual vs ID de BD:** El backend devuelve el ID numérico (`id`) y un ID formateado para la vista (`id_lead`, ej. `L-001`). El frontend debe asegurarse de enviar el `id` numérico en las peticiones PUT y DELETE para evitar errores de tipo.
+3. **Fecha de Último Contacto:** El campo `fecha_ultimo_contacto` no se actualiza automáticamente en cualquier edición. Se reserva para un futuro endpoint específico (`PATCH /api/leads/:id/contacto`).
