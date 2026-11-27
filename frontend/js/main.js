@@ -1,55 +1,67 @@
 // ============================================================
 // Orquestador principal — Aplicación frontend
+// Sistema Integral de Gestión de Leads
 // ============================================================
 
 import { authService, session } from './modules/api.js';
 import { iniciarModuloLeads, guardarLead, eliminarLead } from './modules/leads.js';
 
-// CORRECCIÓN AUDITORÍA: Bandera para evitar múltiples bindings de eventos
-let isLeadsModuleInitialized = false;
+const escapeHTML = (str) => {
+  if (!str) return '';
+  return String(str).replace(/[&<>'"]/g,
+    tag => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      "'": '&#39;',
+      '"': '&quot;'
+    }[tag] || tag)
+  );
+};
 
-document.addEventListener('DOMContentLoaded', async () => {
+let validacionSesionPendiente = true;
+
+document.addEventListener('DOMContentLoaded', () => {
   M.Modal.init(document.querySelectorAll('.modal'));
   M.FormSelect.init(document.querySelectorAll('select'));
   M.Sidenav.init(document.querySelectorAll('.sidenav'));
 
-  const validarSesion = async () => {
-    const { ok, datos } = await authService.perfil();
-    if (ok && datos.exito) {
-      session.guardarUsuario(datos.datos);
-      mostrarApp();
-    } else {
-      session.cerrarSesionLocal();
-      mostrarLogin();
-    }
-  };
-  validarSesion();
+  const btnLogin = document.getElementById('btn-login');
+  btnLogin.disabled = true;
+  btnLogin.textContent = 'Verificando sesión...';
 
   document.getElementById('form-login').addEventListener('submit', async (e) => {
     e.preventDefault();
+    if (validacionSesionPendiente) return;
+
     const email = document.getElementById('login-email').value.trim();
     const password = document.getElementById('login-password').value;
-    const btnLogin = document.getElementById('btn-login');
     const msgError = document.getElementById('login-error');
 
     btnLogin.disabled = true;
     btnLogin.textContent = 'Verificando...';
     msgError.style.display = 'none';
 
-    const { ok, datos } = await authService.login({ email, password });
-
-    btnLogin.disabled = false;
-    btnLogin.textContent = 'Iniciar Sesión';
-
-    if (ok && datos.exito) {
-      session.guardarUsuario(datos.usuario);
-      mostrarApp();
-    } else {
-      msgError.textContent = datos.mensaje || 'Error de autenticación.';
+    try {
+      const { ok, datos } = await authService.login({ email, password });
+      if (ok && datos.exito) {
+        session.guardarUsuario(datos.usuario);
+        mostrarApp();
+      } else {
+        msgError.textContent = datos.mensaje || 'Error de autenticación.';
+        msgError.style.display = 'block';
+      }
+    } catch (error) {
+      console.error('Error al iniciar sesión:', error);
+      msgError.textContent = 'No se pudo completar el inicio de sesión.';
       msgError.style.display = 'block';
+    } finally {
+      btnLogin.disabled = false;
+      btnLogin.textContent = 'Iniciar Sesión';
     }
   });
 
+  // Formulario de Registro
   document.getElementById('form-registro')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     const datos = {
@@ -61,16 +73,19 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const { ok, datos: respuesta } = await authService.registro(datos);
     if (ok && respuesta.exito) {
-      M.toast({ html: `✅ Usuario ${respuesta.datos.nombre} registrado correctamente.`, classes: 'teal darken-2' });
+      const nombreSeguro = escapeHTML(respuesta.datos.nombre);
+      M.toast({ html: `✅ Usuario ${nombreSeguro} registrado correctamente.`, classes: 'teal darken-2' });
       M.Modal.getInstance(document.getElementById('modal-registro')).close();
       document.getElementById('form-registro').reset();
     } else {
-      M.toast({ html: `⚠️ ${respuesta.mensaje || 'Error al registrar.'}`, classes: 'red darken-1' });
+      const mensajeSeguro = escapeHTML(respuesta.mensaje || 'Error al registrar.');
+      M.toast({ html: `⚠️ ${mensajeSeguro}`, classes: 'red darken-1' });
     }
   });
 
   document.querySelectorAll('.btn-cerrar-sesion').forEach(btn =>
-    btn.addEventListener('click', async () => {
+    btn.addEventListener('click', async (e) => {
+      e.preventDefault();
       const { ok } = await authService.logout();
       if (ok) {
         session.cerrarSesionLocal();
@@ -93,15 +108,43 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   });
 
+  document.getElementById('btn-guardar-lead')?.addEventListener('click', guardarLead);
+  document.getElementById('btn-confirmar-eliminar')?.addEventListener('click', (e) => {
+    eliminarLead(e.currentTarget.dataset.id);
+  });
+
   document.getElementById('btn-health-check')?.addEventListener('click', async () => {
     const resultado = document.getElementById('health-resultado');
     resultado.innerHTML = '<span class="grey-text">Verificando...</span>';
     const { ok, datos } = await authService.estado();
     resultado.innerHTML = ok
-      ? `<span class="teal-text darken-2"><i class="material-icons tiny">check_circle</i> Servidor operativo | BD: <strong>${datos.baseDeDatos}</strong> | v${datos.version}</span>`
-      : `<span class="red-text"><i class="material-icons tiny">error</i> ${datos.mensaje}</span>`;
+      ? `<span class="teal-text darken-2"><i class="material-icons tiny">check_circle</i> Servidor operativo | BD: <strong>${escapeHTML(datos.baseDeDatos)}</strong> | v${escapeHTML(datos.version)}</span>`
+      : `<span class="red-text"><i class="material-icons tiny">error</i> ${escapeHTML(datos.mensaje)}</span>`;
   });
+
+  validarSesion(btnLogin);
 });
+
+const validarSesion = async (btnLogin) => {
+  try {
+    const { ok, datos } = await authService.perfil();
+    if (ok && datos.exito) {
+      session.guardarUsuario(datos.datos);
+      mostrarApp();
+    } else {
+      session.cerrarSesionLocal();
+      mostrarLogin();
+    }
+  } catch (error) {
+    console.error('Error al validar la sesión:', error);
+    session.cerrarSesionLocal();
+    mostrarLogin();
+  } finally {
+    validacionSesionPendiente = false;
+    btnLogin.disabled = false;
+    btnLogin.textContent = 'Iniciar Sesión';
+  }
+};
 
 const mostrarLogin = () => {
   document.getElementById('vista-login').style.display = 'flex';
@@ -124,14 +167,25 @@ const mostrarApp = () => {
   mostrarVista('leads');
 };
 
-const mostrarVista = (nombre) => {
+const mostrarVista = async (nombre) => {
   document.querySelectorAll('.vista-seccion').forEach(s => s.style.display = 'none');
   const seccion = document.getElementById(`seccion-${nombre}`);
   if (seccion) seccion.style.display = 'block';
   
-  // CORRECCIÓN AUDITORÍA: Solo inicializar eventos de leads una vez.
-  if (nombre === 'leads' && !isLeadsModuleInitialized) {
-    iniciarModuloLeads();
-    isLeadsModuleInitialized = true;
+  if (nombre === 'leads') {
+    try {
+      await iniciarModuloLeads();
+    } catch (error) {
+      console.error('Error al cargar el módulo de leads:', error);
+      const tbody = document.getElementById('leads-tbody');
+      if (tbody) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="7" class="center-align red-text">
+              No se pudo cargar la lista de leads. Intente nuevamente.
+            </td>
+          </tr>`;
+      }
+    }
   }
 };
